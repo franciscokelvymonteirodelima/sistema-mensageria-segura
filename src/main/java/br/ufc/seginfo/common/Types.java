@@ -71,6 +71,7 @@ public final class Types {
     public static final int MAX_FRAME = 8192;      // maximo de (type + payload)
     public static final int MAX_CLIENTS = 100;
     public static final int PORT = 5000;
+    public static final int HANDSHAKE_TIMEOUT_MS = 10_000;  // tempo maximo para concluir o handshake
 
     // ---------- Codigos de erro (frame ERROR) ----------
 
