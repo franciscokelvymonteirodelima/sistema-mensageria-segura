@@ -141,6 +141,9 @@ public final class Server {
                     + " pk=" + Log.fingerprint(pkC)
                     + " (online: " + router.total() + ")");
 
+            // 4.1) agora que o cliente ja tem o REGISTERED, apresenta ele aos outros (e vice-versa)
+            router.anunciarEntrada(sessao);
+
             socket.setSoTimeout(0); // handshake acabou; agora pode ficar ocioso
 
             // 5) laco de frames. Nesta etapa so registramos o que chega (roteamento vem depois).

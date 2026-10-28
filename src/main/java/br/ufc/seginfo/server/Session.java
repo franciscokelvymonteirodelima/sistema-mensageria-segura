@@ -33,6 +33,10 @@ public final class Session {
     // quem faz o anti-replay e o destinatario.
     private long seqRecv = -1;
 
+    // true depois que o servidor avisou os outros clientes da existencia desta sessao.
+    // So e lido/escrito dentro dos metodos synchronized do Router (por isso nao precisa de volatile).
+    private boolean anunciada = false;
+
     public Session(Socket socket, DataOutputStream out, byte[] clientId, byte[] chavePublica, byte[] salt) {
         this.socket = socket;
         this.out = out;
@@ -56,6 +60,14 @@ public final class Session {
 
     public byte[] salt() {
         return salt;
+    }
+
+    boolean anunciada() {
+        return anunciada;
+    }
+
+    void marcarAnunciada() {
+        anunciada = true;
     }
 
     public synchronized long seqRecv() {
