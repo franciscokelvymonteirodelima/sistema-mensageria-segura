@@ -33,8 +33,11 @@ import java.util.UUID;
  * Uso: ClientMain [host] [porta] [caminho do server.crt]
  * Padroes: localhost, 5000, certs/server.crt
  *
- * Comandos: /peers, /send <inicio do id> <texto>, /badframe e /sair.
- * Os comandos de teste de seguranca (/tamper, /replay) entram na Etapa 6.
+ * Comandos de uso:   /peers, /send <inicio do id> <texto> e /sair.
+ * Comandos de TESTE de seguranca (para a demonstracao):
+ *   /tamper <inicio do id> <texto>  manda uma mensagem com 1 bit adulterado (o destinatario deve rejeitar)
+ *   /replay                         reenvia o ultimo frame valido (o destinatario deve rejeitar)
+ *   /badframe                       manda um tamanho de frame absurdo (o servidor deve desconectar)
  */
 public class ClientMain {
 
@@ -42,6 +45,9 @@ public class ClientMain {
     private static byte[] meuClientId;
     private static PrivateKey minhaChavePrivada;
     private static byte[] meuSalt;
+
+    // Ultimo frame E2E VALIDO enviado com /send (usado pelo /replay). So a thread do teclado mexe nele.
+    private static byte[] ultimoFrameEnviado;
 
     public static void main(String[] args) {
         Log.setTag("CLIENT");
@@ -93,7 +99,8 @@ public class ClientMain {
             leitor.start();
 
             // teclado
-            System.out.println("Comandos: /peers  /send <id> <texto>  /badframe  /sair");
+            System.out.println("Comandos: /peers  /send <id> <texto>  /sair");
+            System.out.println("Testes:   /tamper <id> <texto>  /replay  /badframe");
             BufferedReader teclado = new BufferedReader(new InputStreamReader(System.in));
             String linha;
             while ((linha = teclado.readLine()) != null) {
@@ -103,7 +110,11 @@ public class ClientMain {
                 } else if (linha.equals("/peers")) {
                     mostrarPeers(meuId, meuFingerprint, tabela);
                 } else if (linha.startsWith("/send ")) {
-                    enviar(linha.substring(6).strip(), tabela, out);
+                    enviar(linha.substring(6).strip(), tabela, out, false);
+                } else if (linha.startsWith("/tamper ")) {
+                    enviar(linha.substring(8).strip(), tabela, out, true);
+                } else if (linha.equals("/replay")) {
+                    reenviarUltimo(out);
                 } else if (linha.equals("/badframe")) {
                     Log.warn("enviando frame com tamanho invalido de proposito");
                     Frames.writeRawLength(out, Integer.MAX_VALUE);
@@ -211,17 +222,23 @@ public class ClientMain {
                 + " (online: " + tabela.total() + ")");
     }
 
-    /** /send <inicio do id> <texto>: cifra para o contato e manda ao servidor, que so repassa. */
-    private static void enviar(String args, PeerTable tabela, DataOutputStream out) throws IOException {
+    /**
+     * /send <inicio do id> <texto>: cifra para o contato e manda ao servidor, que so repassa.
+     * /tamper (adulterar = true): igual, mas inverte 1 bit do texto cifrado antes de enviar,
+     * como faria um atacante no caminho. E so para demonstrar que o destinatario rejeita.
+     */
+    private static void enviar(String args, PeerTable tabela, DataOutputStream out, boolean adulterar)
+            throws IOException {
+        String comando = adulterar ? "/tamper" : "/send";
         int espaco = args.indexOf(' ');
         if (espaco < 0) {
-            System.out.println("uso: /send <inicio do id> <texto>");
+            System.out.println("uso: " + comando + " <inicio do id> <texto>");
             return;
         }
         String prefixo = args.substring(0, espaco);
         String texto = args.substring(espaco + 1).strip();
         if (prefixo.length() < 4 || texto.isEmpty()) {
-            System.out.println("uso: /send <inicio do id (minimo 4 caracteres)> <texto>");
+            System.out.println("uso: " + comando + " <inicio do id (minimo 4 caracteres)> <texto>");
             return;
         }
         byte[] bytes = texto.getBytes(StandardCharsets.UTF_8);
@@ -239,7 +256,29 @@ public class ClientMain {
             System.out.println("id ambiguo: digite mais caracteres");
             return;
         }
-        Frames.write(out, Types.E2E, achados.get(0).cifrar(bytes));
+        Peer peer = achados.get(0);
+        byte[] payload = peer.cifrar(bytes);
+        if (adulterar) {
+            // O primeiro byte depois do cabecalho de 52 bytes e o inicio do texto cifrado
+            payload[Types.E2E_HEADER_LEN] ^= 0x01;
+            Log.warn("adulterando de proposito: 1 bit do texto cifrado foi invertido antes de enviar");
+        } else {
+            ultimoFrameEnviado = payload.clone(); // so frames validos podem ser reenviados pelo /replay
+        }
+        Frames.write(out, Types.E2E, payload);
+        System.out.println((adulterar ? "enviado (ADULTERADO) para " : "enviado para ")
+                + peer.uuid().toString().substring(0, 8));
+    }
+
+    /** /replay: reenvia, byte a byte, o ultimo frame valido. O destinatario ja o aceitou uma vez. */
+    private static void reenviarUltimo(DataOutputStream out) throws IOException {
+        if (ultimoFrameEnviado == null) {
+            System.out.println("nada para reenviar: use /send antes");
+            return;
+        }
+        Log.warn("reenviando de proposito o ultimo frame enviado (replay)");
+        Frames.write(out, Types.E2E, ultimoFrameEnviado);
+        System.out.println("frame reenviado");
     }
 
     /** Chegou uma mensagem cifrada: confere o endereco, decifra e valida tag e contador. */
