@@ -113,6 +113,7 @@ public final class Handshake {
             case Types.ERR_SERVER_FULL -> "servidor cheio";
             case Types.ERR_BAD_FRAME -> "servidor rejeitou o frame (framing invalido)";
             case Types.ERR_BAD_HANDSHAKE -> "servidor rejeitou o handshake";
+            case Types.ERR_RECIPIENT_OFFLINE -> "destinatario nao esta online";
             default -> String.format("erro do servidor (codigo 0x%02x)", codigo);
         };
     }

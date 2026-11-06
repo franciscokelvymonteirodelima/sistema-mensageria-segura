@@ -34,8 +34,9 @@ public final class Session {
     private long seqRecv = -1;
 
     // true depois que o servidor avisou os outros clientes da existencia desta sessao.
-    // So e lido/escrito dentro dos metodos synchronized do Router (por isso nao precisa de volatile).
-    private boolean anunciada = false;
+    // Escrito dentro do cadeado do Router, mas lido tambem fora dele (Router.encaminhar),
+    // por isso e volatile.
+    private volatile boolean anunciada = false;
 
     public Session(Socket socket, DataOutputStream out, byte[] clientId, byte[] chavePublica, byte[] salt) {
         this.socket = socket;

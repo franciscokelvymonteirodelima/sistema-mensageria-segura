@@ -14,8 +14,8 @@ import java.util.concurrent.ConcurrentHashMap;
  * A "lista de contatos" do cliente: quem esta online e qual e a chave publica de cada um.
  * E atualizada pelas mensagens PEER_INFO (entrou) e PEER_LEFT (saiu) do servidor.
  *
- * Nesta etapa guarda so os dados crus do peer. Na Etapa 5 cada entrada ganha as chaves
- * AES derivadas (ECDH + HKDF) e os contadores.
+ * Guarda duas coisas por contato: os dados crus do peer (PeerInfo, usados no /peers)
+ * e o Peer, com as chaves AES derivadas (ECDH + HKDF) e os contadores.
  */
 public final class PeerTable {
 
@@ -28,6 +28,30 @@ public final class PeerTable {
 
     private final ConcurrentHashMap<UUID, PeerInfo> peers = new ConcurrentHashMap<>();
 
+    // Um Peer por contato: guarda as chaves AES derivadas e os contadores
+    private final ConcurrentHashMap<UUID, Peer> canais = new ConcurrentHashMap<>();
+
+    /** Guarda (ou SUBSTITUI) o Peer. Se o contato reconectou, o antigo e descartado: chaves e contadores novos. */
+    public void adicionarPeer(Peer peer) {
+        canais.put(peer.uuid(), peer);
+    }
+
+    public Peer buscarPeer(UUID id) {
+        return canais.get(id);
+    }
+
+    /** Contatos cujo id comeca com o texto digitado (usado no /send). */
+    public List<Peer> buscarPorPrefixo(String prefixo) {
+        String p = prefixo.toLowerCase();
+        List<Peer> achados = new ArrayList<>();
+        for (Peer peer : canais.values()) {
+            if (peer.uuid().toString().startsWith(p)) {
+                achados.add(peer);
+            }
+        }
+        return achados;
+    }
+
     /** Adiciona ou SUBSTITUI (se o peer reconectou, chega com chave e salt novos). */
     public void adicionar(PeerInfo info) {
         peers.put(info.uuid(), info);
@@ -35,6 +59,7 @@ public final class PeerTable {
 
     /** true se o peer estava na tabela. */
     public boolean remover(UUID id) {
+        canais.remove(id);
         return peers.remove(id) != null;
     }
 

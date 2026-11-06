@@ -1,9 +1,13 @@
 package br.ufc.seginfo.server;
 
+import br.ufc.seginfo.common.E2EFrame;
+import br.ufc.seginfo.common.Frames;
+import br.ufc.seginfo.common.Ids;
 import br.ufc.seginfo.common.Log;
 import br.ufc.seginfo.common.Types;
 
 import java.io.IOException;
+import java.util.Arrays;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -71,6 +75,38 @@ public final class Router {
             if (outra.anunciada()) {
                 enviarPeerLeft(outra, sessao);
             }
+        }
+    }
+
+    /**
+     * Encaminha um frame E2E SEM abrir (o servidor nao tem as chaves).
+     * Lanca FrameException se o frame for invalido: o Server responde ERROR e fecha a conexao.
+     */
+    public void encaminhar(Session origem, byte[] payload) throws Frames.FrameException {
+        if (!E2EFrame.tamanhoValido(payload.length)) {
+            throw new Frames.FrameException("frame E2E com tamanho invalido: " + payload.length);
+        }
+        // quem manda tem que ser quem diz ser: impede um cliente de se passar por outro
+        if (!Arrays.equals(E2EFrame.senderIdDe(payload), origem.clientId())) {
+            throw new Frames.FrameException("sender_id diferente do client_id desta conexao");
+        }
+
+        Session destino = sessoes.get(Ids.paraUuid(E2EFrame.recipientIdDe(payload)));
+        if (destino == null || !destino.anunciada()) {
+            try {
+                origem.enviarAdmin(Types.ERROR, new byte[]{Types.ERR_RECIPIENT_OFFLINE});
+            } catch (IOException e) {
+                Log.warn("falha ao avisar " + origem.uuid() + " (destinatario offline)");
+            }
+            Log.info("E2E de " + origem.uuid() + " descartado: destinatario offline");
+            return;
+        }
+        try {
+            destino.enviar(Types.E2E, payload);
+            Log.info("E2E " + origem.uuid() + " -> " + destino.uuid() + " (" + payload.length + " bytes)");
+        } catch (IOException e) {
+            // o problema e do destino, nao de quem enviou
+            Log.warn("falha ao encaminhar para " + destino.uuid() + ": " + e.getMessage());
         }
     }
 

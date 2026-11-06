@@ -2,6 +2,7 @@ package br.ufc.seginfo.client;
 
 import br.ufc.seginfo.common.Certs;
 import br.ufc.seginfo.common.CryptoUtil;
+import br.ufc.seginfo.common.E2EFrame;
 import br.ufc.seginfo.common.Frames;
 import br.ufc.seginfo.common.Ids;
 import br.ufc.seginfo.common.Log;
@@ -16,10 +17,13 @@ import java.io.IOException;
 import java.io.InputStreamReader;
 import java.net.Socket;
 import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.security.GeneralSecurityException;
 import java.security.KeyPair;
+import java.security.PrivateKey;
 import java.security.cert.X509Certificate;
+import java.util.Arrays;
 import java.util.List;
 import java.util.UUID;
 
@@ -29,10 +33,15 @@ import java.util.UUID;
  * Uso: ClientMain [host] [porta] [caminho do server.crt]
  * Padroes: localhost, 5000, certs/server.crt
  *
- * Comandos (por enquanto): /peers, /badframe e /sair.
- * Os comandos de chat (/send, /tamper, /replay) entram nas proximas etapas.
+ * Comandos: /peers, /send <inicio do id> <texto>, /badframe e /sair.
+ * Os comandos de teste de seguranca (/tamper, /replay) entram na Etapa 6.
  */
 public class ClientMain {
+
+    // Dados desta execucao, usados tambem pela thread que le o servidor
+    private static byte[] meuClientId;
+    private static PrivateKey minhaChavePrivada;
+    private static byte[] meuSalt;
 
     public static void main(String[] args) {
         Log.setTag("CLIENT");
@@ -71,6 +80,10 @@ public class ClientMain {
             socket.setSoTimeout(0);
             Log.info("handshake concluido: servidor autenticado e cliente registrado");
 
+            meuClientId = clientId;
+            minhaChavePrivada = par.getPrivate();
+            meuSalt = r.salt(); // o salt que o servidor me deu: entra no HKDF quando eu sou o "A" do par
+
             // lista de contatos, atualizada pela thread que le o servidor
             PeerTable tabela = new PeerTable();
 
@@ -80,7 +93,7 @@ public class ClientMain {
             leitor.start();
 
             // teclado
-            System.out.println("Comandos: /peers  /badframe  /sair");
+            System.out.println("Comandos: /peers  /send <id> <texto>  /badframe  /sair");
             BufferedReader teclado = new BufferedReader(new InputStreamReader(System.in));
             String linha;
             while ((linha = teclado.readLine()) != null) {
@@ -89,6 +102,8 @@ public class ClientMain {
                     break;
                 } else if (linha.equals("/peers")) {
                     mostrarPeers(meuId, meuFingerprint, tabela);
+                } else if (linha.startsWith("/send ")) {
+                    enviar(linha.substring(6).strip(), tabela, out);
                 } else if (linha.equals("/badframe")) {
                     Log.warn("enviando frame com tamanho invalido de proposito");
                     Frames.writeRawLength(out, Integer.MAX_VALUE);
@@ -144,6 +159,7 @@ public class ClientMain {
                 switch (f.type()) {
                     case Types.PEER_INFO -> tratarPeerInfo(f.payload(), meuId, tabela);
                     case Types.PEER_LEFT -> tratarPeerLeft(f.payload(), tabela);
+                    case Types.E2E -> tratarE2E(f.payload(), tabela);
                     case Types.ERROR -> Log.warn("erro do servidor: " + Handshake.descreverErro(f.payload()));
                     default -> Log.info(String.format("recebido frame 0x%02x (%d bytes) - ainda nao tratado",
                             f.type(), f.payload().length));
@@ -178,10 +194,80 @@ public class ClientMain {
             return;
         }
         boolean jaConhecia = tabela.buscar(id) != null;
+
+        // ECDH + HKDF: deriva as chaves AES deste contato (se ele reconectou, substitui o Peer antigo)
+        Peer peer;
+        try {
+            peer = Peer.criar(meuClientId, minhaChavePrivada, info, meuSalt);
+        } catch (GeneralSecurityException e) {
+            tabela.remover(id);
+            Log.warn("nao foi possivel derivar as chaves com " + id + ", contato ignorado");
+            return;
+        }
         tabela.adicionar(info);
+        tabela.adicionarPeer(peer);
         Log.info((jaConhecia ? "peer reconectou (chave nova): " : "peer entrou: ")
                 + "id=" + id + " pk=" + Log.fingerprint(info.chavePublica())
                 + " (online: " + tabela.total() + ")");
+    }
+
+    /** /send <inicio do id> <texto>: cifra para o contato e manda ao servidor, que so repassa. */
+    private static void enviar(String args, PeerTable tabela, DataOutputStream out) throws IOException {
+        int espaco = args.indexOf(' ');
+        if (espaco < 0) {
+            System.out.println("uso: /send <inicio do id> <texto>");
+            return;
+        }
+        String prefixo = args.substring(0, espaco);
+        String texto = args.substring(espaco + 1).strip();
+        if (prefixo.length() < 4 || texto.isEmpty()) {
+            System.out.println("uso: /send <inicio do id (minimo 4 caracteres)> <texto>");
+            return;
+        }
+        byte[] bytes = texto.getBytes(StandardCharsets.UTF_8);
+        if (bytes.length > Types.MAX_PLAINTEXT) {
+            System.out.println("mensagem grande demais: " + bytes.length + " bytes (maximo "
+                    + Types.MAX_PLAINTEXT + ")");
+            return;
+        }
+        List<Peer> achados = tabela.buscarPorPrefixo(prefixo);
+        if (achados.isEmpty()) {
+            System.out.println("nenhum contato online com id comecando por " + prefixo + " (veja /peers)");
+            return;
+        }
+        if (achados.size() > 1) {
+            System.out.println("id ambiguo: digite mais caracteres");
+            return;
+        }
+        Frames.write(out, Types.E2E, achados.get(0).cifrar(bytes));
+    }
+
+    /** Chegou uma mensagem cifrada: confere o endereco, decifra e valida tag e contador. */
+    private static void tratarE2E(byte[] payload, PeerTable tabela) {
+        E2EFrame frame = E2EFrame.parsear(payload);
+        if (frame == null) {
+            Log.warn("frame E2E com tamanho invalido, descartado");
+            return;
+        }
+        if (!Arrays.equals(frame.recipientId(), meuClientId)) {
+            Log.warn("frame E2E que nao e para mim, descartado");
+            return;
+        }
+        UUID remetente = Ids.paraUuid(frame.senderId());
+        Peer peer = tabela.buscarPeer(remetente);
+        if (peer == null) {
+            Log.warn("frame E2E de remetente desconhecido: " + remetente);
+            return;
+        }
+        Peer.Resultado r = peer.decifrar(frame);
+        if (!r.ok()) {
+            // so o motivo vai para o log, nunca o conteudo
+            Log.warn("mensagem de " + remetente + " rejeitada: " + r.rejeicao());
+            return;
+        }
+        // o texto vem de outra pessoa: troca caracteres de controle para ninguem mexer no seu terminal
+        String texto = new String(r.texto(), StandardCharsets.UTF_8).replaceAll("\\p{Cntrl}", "?");
+        System.out.println("[" + remetente.toString().substring(0, 8) + "] " + texto);
     }
 
     /** Um peer saiu: tira da tabela. */

@@ -146,11 +146,14 @@ public final class Server {
 
             socket.setSoTimeout(0); // handshake acabou; agora pode ficar ocioso
 
-            // 5) laco de frames. Nesta etapa so registramos o que chega (roteamento vem depois).
+            // 5) laco de frames: E2E e encaminhado sem abrir; o resto nao e esperado do cliente
             while (true) {
                 Frames.Frame f = Frames.read(in);
-                Log.info(String.format("frame 0x%02x (%d bytes) de %s - ainda nao tratado",
-                        f.type(), f.payload().length, quem));
+                if (f.type() == Types.E2E) {
+                    router.encaminhar(sessao, f.payload());
+                } else {
+                    Log.warn(String.format("frame inesperado 0x%02x de %s, ignorado", f.type(), quem));
+                }
             }
 
         } catch (EOFException e) {
