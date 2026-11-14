@@ -1,3 +1,7 @@
+// & (Get-ChildItem "$env:USERPROFILE\.jdks" -Recurse -Filter java.exe | Select-Object -First 1).FullName -cp target/classes br.ufc.seginfo.client.ClientMain
+
+// cole esse comando la no terminal para poder criar multiplos clientes asim será mais facil ...
+
 package br.ufc.seginfo.client;
 
 import br.ufc.seginfo.common.Certs;

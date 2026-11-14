@@ -29,10 +29,12 @@ src/main/java/br/ufc/seginfo/
 ├── common/    Types, Frames, Log, CryptoUtil, E2EFrame, Ids, Certs
 ├── server/    ServerMain, Server, Session, Router
 └── client/    ClientMain, Handshake, Peer, PeerTable
-src/test/java/br/ufc/seginfo/    TesteEtapa1 ... TesteEtapa6
+src/test/java/br/ufc/seginfo/    TesteEtapa1 ... TesteEtapa6, TesteLimites
 certs/         server.p12 (chave privada) e server.crt (certificado)  -> NAO vai para o Git
 docs/          decisoes-projeto-tp3.txt
 ```
+
+Os testes são programas com `main`. Se ainda estiverem dentro de `src/main`, tudo bem: funcionam do mesmo jeito.
 
 | Classe | Papel |
 |---|---|
@@ -104,6 +106,19 @@ java -cp target/classes br.ufc.seginfo.client.ClientMain [host] [porta] [caminho
 
 Padrões: `localhost`, `5000` e `certs/server.crt`.
 
+### Rodar pelo terminal do IntelliJ (Windows)
+
+Alternativa que não exige configurar nada: na raiz do projeto, com o projeto já compilado
+(`Ctrl+F9`). Use um terminal por processo (o **+** no topo do Terminal abre outra aba).
+
+```powershell
+$java = (Get-ChildItem "$env:USERPROFILE\.jdks" -Recurse -Filter java.exe | Select-Object -First 1).FullName
+& $java -cp target/classes br.ufc.seginfo.server.ServerMain     # servidor (uma aba)
+& $java -cp target/classes br.ufc.seginfo.client.ClientMain     # cada cliente, em uma aba nova
+```
+
+Suba o servidor primeiro. Os comandos do cliente são digitados na aba daquele cliente.
+
 ## Comandos do cliente
 
 | Comando | O que faz |
@@ -115,7 +130,11 @@ Padrões: `localhost`, `5000` e `certs/server.crt`.
 | `/replay` | **teste**: reenvia o último frame válido |
 | `/badframe` | **teste**: manda um tamanho de frame absurdo |
 
-Exemplo: `/peers` mostra o id `94af17f7-...` e então `/send 94af oi, tudo bem?`.
+> **Atenção:** os sinais `<` e `>` indicam onde colocar o seu valor e **não devem ser digitados**.
+> Escreva `/send 94af oi, tudo bem?`, e não `/send <94af> <oi, tudo bem?>`.
+
+Exemplo: `/peers` mostra o id `94af17f7-...`, e então `/send 94af oi, tudo bem?` envia a mensagem.
+A mensagem aparece no terminal do **destinatário**; no terminal de quem envia só aparece a confirmação.
 
 ## Protocolo em resumo
 
@@ -183,7 +202,7 @@ recebido aparece no terminal do destinatário como interação com o usuário, e
 
 ## Testes
 
-Cada etapa tem um teste com `main` em `src/test/java/br/ufc/seginfo/`. Rode e confira a linha final
+Cada etapa tem um teste com `main`. Rode e confira a linha final
 `TUDO OK - etapa N aprovada.` Eles geram os próprios certificados temporários com o `keytool`,
 então não dependem da pasta `certs/`.
 
@@ -195,6 +214,19 @@ então não dependem da pasta `certs/`.
 | `TesteEtapa4` | `PEER_INFO` e `PEER_LEFT`, incluindo entradas simultâneas |
 | `TesteEtapa5` | mensagens E2E, bitflip em cada bit, replay, encaminhamento sem abrir |
 | `TesteEtapa6` | `ClientMain` reais: `/send`, `/tamper`, `/replay`, `/badframe` |
+| `TesteLimites` | servidor cheio (o cliente 101 recebe `ERR_SERVER_FULL`) e timeout do handshake (10 s). Demora cerca de 12 s e escreve bastante log |
+
+## Solução de problemas
+
+| Mensagem | Causa | O que fazer |
+|---|---|---|
+| `keystore nao encontrado: ...certs\server.p12` | a pasta `certs/` não vai para o Git | gerar o certificado (seção "Como rodar") |
+| `NoSuchFileException: certs/server.crt` | terminal fora da raiz do projeto, ou `certs/` não existe | abrir o terminal na raiz e gerar o certificado |
+| `certificado do servidor nao confere com o pinado` | `server.crt` e `server.p12` são de pares diferentes | gerar de novo e usar os dois arquivos juntos |
+| `ConnectException` no cliente | o servidor não está rodando | subir o `ServerMain` primeiro |
+| `Address already in use` no servidor | já existe um servidor aberto | fechar o antigo |
+| `nenhum contato online com id comecando por ...` | id digitado com `<` `>`, ou prefixo errado | usar `/peers` e digitar só os 4 primeiros caracteres |
+| digito um comando e nada acontece | o foco não está no console daquele cliente | clicar dentro do console (ou da aba do terminal) do cliente |
 
 ## Limitações conhecidas
 
@@ -203,11 +235,9 @@ então não dependem da pasta `certs/`.
 - As mensagens administrativas do servidor (`REGISTERED`, `PEER_INFO`, `PEER_LEFT`, `ERROR`) têm
   `seq` contra replay, mas **não têm autenticação criptográfica**, porque o enunciado não define uma
   chave entre servidor e cliente.
+- O canal entre cliente e servidor é TCP simples: quem observa a rede vê quem fala com quem e o
+  tamanho dos frames. O conteúdo das mensagens continua protegido pelo E2E.
 - Não há login: qualquer um pode registrar um `client_id` livre.
 - Um destinatário que sai com a conexão travada pode atrasar avisos de entrada e saída.
 - A rotação de chaves (opcional no enunciado) não foi implementada.
 - A senha do `server.p12` é `changeit` por padrão, o que serve para o trabalho, mas não para produção.
-
-## Equipe
-
-(preencher com os nomes dos integrantes)
